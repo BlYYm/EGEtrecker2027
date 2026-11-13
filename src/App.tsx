@@ -74,11 +74,8 @@ function formatDateKey(year: number, monthIndex: number, day: number): string {
   return `${year}-${m}-${d}`;
 }
 
-// Защита от кривых форматов дат от нейросети (приводит всё к строгому YYYY-MM-DD)
 function normalizeDate(raw: string, fallbackYear: number, fallbackMonthIndex: number): string {
   const clean = String(raw || '').trim();
-
-  // Если пришло YYYY-M-D или YYYY-MM-DD
   const isoMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (isoMatch) {
     const y = parseInt(isoMatch[1], 10);
@@ -88,8 +85,6 @@ function normalizeDate(raw: string, fallbackYear: number, fallbackMonthIndex: nu
       return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
   }
-
-  // Если пришло DD.MM.YYYY или DD.MM
   const ruMatch = clean.match(/^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$/);
   if (ruMatch) {
     const d = parseInt(ruMatch[1], 10);
@@ -100,39 +95,34 @@ function normalizeDate(raw: string, fallbackYear: number, fallbackMonthIndex: nu
       return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
   }
-
-  // Если пришло просто число дня ("15")
   const dayOnly = parseInt(clean, 10);
   if (!isNaN(dayOnly) && dayOnly >= 1 && dayOnly <= 31) {
     return formatDateKey(fallbackYear, fallbackMonthIndex, dayOnly);
   }
-
   return formatDateKey(fallbackYear, fallbackMonthIndex, 1);
 }
 
-// Авто-уточнение предмета по ключевым словам, если шапка на скрине обрезана
 function detectSubjectByKeywords(rawSubjectId: string, title: string): string {
   const t = title.toLowerCase();
   if (/(рюрик|романов|смут|петр i|иван грозн|ордын|княз|древн.*рус|вов|великая отечеств|декабрист|ссср|истори|карт.*егэ)/i.test(t)) {
-    return '3'; // История
+    return '3';
   }
   if (/(инфляц|экономик|политик|конституц|право|социальн|стратификац|гражданск|налог|рынок|издержк|безработиц|общество)/i.test(t)) {
-    return '2'; // Обществознание
+    return '2';
   }
   if (/(орфоэп|ударен|пароним|пунктуац|причаст|деепричаст|сочинен|корн|приставк|суффикс|спп|ссп|текст.*егэ)/i.test(t)) {
-    return '5'; // Русский язык
+    return '5';
   }
   if (/(тригонометр|логарифм|производн|планиметр|стереометр|неравенств|параметр|вероятност)/i.test(t)) {
-    return '4'; // Математика
+    return '4';
   }
   if (/(python|пайтон|кодирован|алгебр.*логик|граф|рекурс|массив|информатик)/i.test(t)) {
-    return '1'; // Информатика
+    return '1';
   }
   const exists = SUBJECTS.some(s => s.id === String(rawSubjectId));
   return exists ? String(rawSubjectId) : '2';
 }
 
-// Оптимальное сжатие изображения перед отправкой в Vision AI
 function compressImageToDataUrl(file: File, maxDim = 1400): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -173,24 +163,23 @@ export default function App() {
   const [viewYear, setViewYear] = useState<number>(now.getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(now.getMonth());
 
-  // Хранилище v4: чистый старт с 0 XP
   const [calendarTasks, setCalendarTasks] = useState<CalendarTask[]>(() =>
-    safeLoad('ege_v4_calendar_tasks', [])
+    safeLoad('ege_v5_calendar_tasks', [])
   );
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() =>
-    safeLoad('ege_v4_daily_tasks', [
+    safeLoad('ege_v5_daily_tasks', [
       { id: 'd1', title: 'Повторить 10 дат или терминов', completed: false },
       { id: 'd2', title: 'Прорешать 1 тестовый вариант', completed: false },
     ])
   );
   const [tutors, setTutors] = useState<TutorSession[]>(() =>
-    safeLoad('ege_v4_tutors', [])
+    safeLoad('ege_v5_tutors', [])
   );
   const [bonusXp, setBonusXp] = useState<number>(() =>
-    safeLoad('ege_v4_bonus_xp', 0)
+    safeLoad('ege_v5_bonus_xp', 0)
   );
   const [lastWateredDate, setLastWateredDate] = useState<string>(() =>
-    localStorage.getItem('ege_v4_last_watered') || ''
+    localStorage.getItem('ege_v5_last_watered') || ''
   );
   const [geminiKey, setGeminiKey] = useState<string>(() =>
     localStorage.getItem('ege_gemini_api_key') || ''
@@ -206,29 +195,18 @@ export default function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem('ege_v4_calendar_tasks', JSON.stringify(calendarTasks));
-  }, [calendarTasks]);
+    localStorage.setItem('ege_v5_calendar_tasks', JSON.stringify(calendarTasks));
+    localStorage.setItem('ege_v5_daily_tasks', JSON.stringify(dailyTasks));
+    localStorage.setItem('ege_v5_tutors', JSON.stringify(tutors));
+    localStorage.setItem('ege_v5_bonus_xp', JSON.stringify(bonusXp));
+  }, [calendarTasks, dailyTasks, tutors, bonusXp]);
 
-  useEffect(() => {
-    localStorage.setItem('ege_v4_daily_tasks', JSON.stringify(dailyTasks));
-  }, [dailyTasks]);
-
-  useEffect(() => {
-    localStorage.setItem('ege_v4_tutors', JSON.stringify(tutors));
-  }, [tutors]);
-
-  useEffect(() => {
-    localStorage.setItem('ege_v4_bonus_xp', JSON.stringify(bonusXp));
-  }, [bonusXp]);
-
-  // Сбалансированная система опыта (XP) — старт строго с 0 XP
   const completedNormalCount = calendarTasks.filter(t => t.completed && t.priority !== 'high').length;
   const completedHighCount = calendarTasks.filter(t => t.completed && t.priority === 'high').length;
   const completedCalendarCount = completedNormalCount + completedHighCount;
   const completedDailiesCount = dailyTasks.filter(d => d.completed).length;
   const completedTutorsCount = tutors.filter(t => t.homeworkDone).length;
 
-  // Награды: Обычный вебинар = +3 XP, Важный = +5 XP, Ежедневка = +2 XP, ДЗ репетитора = +5 XP, Полив = +1 XP
   const totalXp = Math.max(
     0,
     completedNormalCount * 3 +
@@ -258,7 +236,7 @@ export default function App() {
     if (!canWaterToday) return;
     setBonusXp(prev => prev + 1);
     setLastWateredDate(todayStr);
-    localStorage.setItem('ege_v4_last_watered', todayStr);
+    localStorage.setItem('ege_v5_last_watered', todayStr);
   };
 
   const handleResetTreeXp = () => {
@@ -268,7 +246,7 @@ export default function App() {
     setTutors(prev => prev.map(t => ({ ...t, homeworkDone: false })));
     setBonusXp(0);
     setLastWateredDate('');
-    localStorage.removeItem('ege_v4_last_watered');
+    localStorage.removeItem('ege_v5_last_watered');
   };
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -282,45 +260,32 @@ export default function App() {
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
   const [analyzeStatus, setAnalyzeStatus] = useState('');
 
-  // Форма для нового репетитора
   const [newTutorName, setNewTutorName] = useState('');
   const [newTutorSubject, setNewTutorSubject] = useState('2');
   const [newTutorDate, setNewTutorDate] = useState(todayStr);
   const [newTutorTime, setNewTutorTime] = useState('18:00');
   const [newTutorHw, setNewTutorHw] = useState('');
 
-  // Функция запроса к Vision AI (с поддержкой Gemini 2.0 Flash и резервного Vision-сервера)
   const recognizeScheduleFromImage = async (dataUrl: string): Promise<any[]> => {
     const ocrPrompt = `Ты точный OCR-сканер расписаний онлайн-школы Умскул для подготовки к ЕГЭ.
 Внимательно прочитай КАЖДУЮ ячейку календаря на изображении.
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать свои темы или пропускать дни, где есть текст! Переписывай темы слово в слово как на картинке.
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать свои темы! Переписывай темы слово в слово как на картинке.
 
-1. Определи предмет по заголовку или темам на картинке:
-   "2" = Обществознание
-   "3" = История
-   "5" = Русский язык
-   "4" = Математика
-   "1" = Информатика
-   "6" = Английский язык
-   "7" = Литература
-   "8" = Биология
-   "9" = Химия
-   "10" = Физика
-2. Определи месяц и год расписания (Ноябрь = 11, Декабрь = 12, Октябрь = 10, Январь = 01, Февраль = 02, Март = 03, Апрель = 04, Май = 05. Для Сентябрь-Декабрь год 2026, для Январь-Июнь год 2027. Если месяц не подписан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}).
-3. Для каждого дня месяца (числа от 1 до 31), где написано занятие, создай объект. Если в ячейке указано время (например, "16:00" или "14:00"), запиши его в поле "time".
-4. Верни ТОЛЬКО чистый JSON-массив без текста и без markdown:
+1. Определи предмет по заголовку или темам на картинке.
+2. Определи месяц и год расписания. Если месяц не указан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}.
+3. Для каждого дня месяца с занятием создай объект. Если есть время, запиши его в "time".
+4. Верни ТОЛЬКО чистый JSON-массив:
 [
-  {"date": "2026-11-05", "time": "16:00", "subjectId": "3", "title": "Точная тема с картинки", "priority": "high"}
+  {"date": "2026-11-05", "time": "16:00", "subjectId": "3", "title": "Тема с картинки", "priority": "high"}
 ]`;
 
     let rawText = '';
-
-    // 1. Если есть ключ Gemini — используем официальный Google Gemini Flash Vision (максимальная точность чтения русского текста на картинках)
     const activeKey = geminiKey.trim();
+
     if (activeKey) {
       const base64Data = dataUrl.split(',')[1];
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -339,13 +304,14 @@ export default function App() {
       );
 
       const geminiData = await geminiRes.json();
-      if (!geminiData.error) {
-        rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      
+      // ВАЖНО: Теперь показываем реальную ошибку Google, если ключ отклонен!
+      if (geminiData.error) {
+        throw new Error(`Google API: ${geminiData.error.message}`);
       }
-    }
-
-    // 2. Если ключа нет или запрос не прошел — используем бесплатный OpenAI-совместимый Vision endpoint
-    if (!rawText) {
+      
+      rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } else {
       const res = await fetch('https://text.pollinations.ai/openai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -365,7 +331,7 @@ export default function App() {
       });
 
       if (!res.ok) {
-        throw new Error(`Сервер распознавания перегружен (код ${res.status}). Нажми на 🔑 сверху, чтобы вставить бесплатный ключ Gemini для 100% точности.`);
+        throw new Error(`Запасной сервер недоступен (код ${res.status}). Убедись, что твой ключ сохранен в настройках 🔑.`);
       }
 
       const data = await res.json();
@@ -463,7 +429,6 @@ export default function App() {
     }
   };
 
-  // Переключение реальных месяцев
   const handlePrevMonth = () => {
     if (viewMonth === 0) {
       setViewMonth(11);
@@ -487,7 +452,6 @@ export default function App() {
     setViewMonth(now.getMonth());
   };
 
-  // Реальные дни недели и числа месяца
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOffset = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
 
@@ -546,7 +510,6 @@ export default function App() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#0f1117] text-slate-100 font-sans overflow-hidden">
-      {/* Оверлей во время чтения фото ИИ */}
       {isAnalyzingPhoto && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-indigo-500/40 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
@@ -562,7 +525,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Боковая панель для ПК */}
       <aside className="hidden md:flex w-64 bg-[#161b22] border-r border-slate-800 flex-col justify-between shrink-0">
         <div>
           <div className="p-6 flex items-center gap-3">
@@ -617,7 +579,6 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Основная область */}
       <main className="flex-1 flex flex-col overflow-hidden pb-16 md:pb-0">
         <header className="h-14 md:h-16 border-b border-slate-800 bg-[#161b22]/80 backdrop-blur flex items-center justify-between px-4 md:px-8 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -656,7 +617,6 @@ export default function App() {
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          {/* ВКЛАДКА: РЕАЛЬНЫЙ КАЛЕНДАРЬ */}
           {activeTab === 'calendar' && (
             <div className="space-y-4 md:space-y-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
@@ -824,7 +784,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ВКЛАДКА: ЕЖЕДНЕВКИ */}
           {activeTab === 'dailies' && (
             <div className="max-w-2xl mx-auto space-y-6">
               <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-2xl p-4 flex items-center justify-between">
@@ -889,7 +848,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ВКЛАДКА: РЕПЕТИТОРЫ */}
           {activeTab === 'tutors' && (
             <div className="max-w-3xl mx-auto space-y-6">
               <div className="bg-[#161b22] border border-slate-800 p-4 md:p-5 rounded-2xl space-y-4">
@@ -998,7 +956,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ВКЛАДКА: ДЕРЕВО ЗНАНИЙ */}
           {activeTab === 'tree' && (
             <div className="max-w-4xl mx-auto space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-[#161b22] border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl">
@@ -1143,7 +1100,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ВКЛАДКА: ИИ НАСТАВНИК */}
           {activeTab === 'ai' && (
             <div className="max-w-3xl mx-auto h-[calc(100vh-11rem)] flex flex-col bg-[#161b22] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4">
@@ -1182,7 +1138,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Нижняя навигация для телефона */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161b22] border-t border-slate-800 flex items-center justify-around px-1 z-40">
         {navItems.map(tab => (
           <button
@@ -1198,7 +1153,6 @@ export default function App() {
         ))}
       </nav>
 
-      {/* Модальное окно настройки ключа Gemini (по желанию для максимальной точности OCR) */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-slate-800 w-full max-w-md p-6 rounded-3xl space-y-4 shadow-2xl">
@@ -1207,11 +1161,11 @@ export default function App() {
               <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              По умолчанию сайт использует бесплатный встроенный сканер. Если хочешь 100% точность чтения мелкого текста с таблиц Умскул через <strong>Google Gemini 2.0 Flash</strong>, вставь бесплатный ключ с <em>aistudio.google.com</em>:
+              По умолчанию сайт использует бесплатный встроенный сканер. Если хочешь 100% точность чтения мелкого текста с таблиц Умскул через <strong>Google Gemini 1.5 Flash</strong>, вставь бесплатный ключ с <em>aistudio.google.com</em>:
             </p>
             <input
               type="password"
-              placeholder="AIzaSy..."
+              placeholder="AQ.Ab..."
               value={geminiKey}
               onChange={(e) => setGeminiKey(e.target.value)}
               className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-600"
@@ -1237,7 +1191,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Модальное окно создания / редактирования задачи */}
       {editingTask && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-slate-800 w-full max-w-md p-6 rounded-3xl space-y-4 shadow-2xl">
