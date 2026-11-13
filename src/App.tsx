@@ -10,6 +10,7 @@ interface Subject {
 interface CalendarTask {
   id: string;
   date: string;
+  time?: string;
   subjectId: string;
   title: string;
   priority: 'high' | 'medium' | 'normal';
@@ -38,28 +39,25 @@ interface ChatMessage {
   text: string;
 }
 
-const INITIAL_SUBJECTS: Subject[] = [
+const SUBJECTS: Subject[] = [
   { id: '2', name: 'Обществознание', short: 'Общ', color: 'bg-amber-600 text-white' },
   { id: '3', name: 'История', short: 'Ист', color: 'bg-rose-600 text-white' },
   { id: '5', name: 'Русский язык', short: 'Рус', color: 'bg-emerald-600 text-white' },
   { id: '4', name: 'Математика', short: 'Мат', color: 'bg-blue-600 text-white' },
   { id: '1', name: 'Информатика', short: 'Инф', color: 'bg-indigo-600 text-white' },
+  { id: '6', name: 'Английский язык', short: 'Англ', color: 'bg-purple-600 text-white' },
+  { id: '7', name: 'Литература', short: 'Лит', color: 'bg-pink-600 text-white' },
+  { id: '8', name: 'Биология', short: 'Био', color: 'bg-teal-600 text-white' },
+  { id: '9', name: 'Химия', short: 'Хим', color: 'bg-cyan-600 text-white' },
+  { id: '10', name: 'Физика', short: 'Физ', color: 'bg-sky-600 text-white' },
 ];
 
-const DEFAULT_CALENDAR_TASKS: CalendarTask[] = [
-  { id: '1', date: '2026-11-15', subjectId: '3', title: 'Разбор вариантов ЕГЭ', priority: 'high', note: 'Повторить карты и культуру', completed: false },
-  { id: '2', date: '2026-11-16', subjectId: '2', title: 'Блок: Политика и Право', priority: 'medium', note: 'Повторить формы правления и Конституцию', completed: false },
-  { id: '3', date: '2026-11-18', subjectId: '5', title: 'Сочинение ЕГЭ (задание 27)', priority: 'high', note: 'Клише и структура аргументации', completed: false },
+const MONTH_NAMES = [
+  'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
 ];
 
-const DEFAULT_DAILIES: DailyTask[] = [
-  { id: 'd1', title: 'Повторить 10 дат и терминов по истории', completed: false },
-  { id: 'd2', title: 'Прорешать 1 тестовую часть по обществознанию', completed: true },
-];
-
-const DEFAULT_TUTORS: TutorSession[] = [
-  { id: 't1', subjectId: '2', tutorName: 'Анна Петровна', date: '2026-11-17', time: '17:00', homework: 'Вариант №4 + сложные планы по экономике', homeworkDone: false }
-];
+const WEEKDAYS_SHORT = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
 function safeLoad<T>(key: string, fallback: T): T {
   try {
@@ -70,25 +68,134 @@ function safeLoad<T>(key: string, fallback: T): T {
   }
 }
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'dailies' | 'tutors' | 'tree' | 'ai'>('calendar');
-  const [subjects] = useState<Subject[]>(INITIAL_SUBJECTS);
+function formatDateKey(year: number, monthIndex: number, day: number): string {
+  const m = String(monthIndex + 1).padStart(2, '0');
+  const d = String(day).padStart(2, '0');
+  return `${year}-${m}-${d}`;
+}
 
+// Защита от кривых форматов дат от нейросети (приводит всё к строгому YYYY-MM-DD)
+function normalizeDate(raw: string, fallbackYear: number, fallbackMonthIndex: number): string {
+  const clean = String(raw || '').trim();
+
+  // Если пришло YYYY-M-D или YYYY-MM-DD
+  const isoMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
+  // Если пришло DD.MM.YYYY или DD.MM
+  const ruMatch = clean.match(/^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$/);
+  if (ruMatch) {
+    const d = parseInt(ruMatch[1], 10);
+    const m = parseInt(ruMatch[2], 10);
+    let y = ruMatch[3] ? parseInt(ruMatch[3], 10) : fallbackYear;
+    if (y < 100) y += 2000;
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
+  // Если пришло просто число дня ("15")
+  const dayOnly = parseInt(clean, 10);
+  if (!isNaN(dayOnly) && dayOnly >= 1 && dayOnly <= 31) {
+    return formatDateKey(fallbackYear, fallbackMonthIndex, dayOnly);
+  }
+
+  return formatDateKey(fallbackYear, fallbackMonthIndex, 1);
+}
+
+// Авто-уточнение предмета по ключевым словам, если шапка на скрине обрезана
+function detectSubjectByKeywords(rawSubjectId: string, title: string): string {
+  const t = title.toLowerCase();
+  if (/(рюрик|романов|смут|петр i|иван грозн|ордын|княз|древн.*рус|вов|великая отечеств|декабрист|ссср|истори|карт.*егэ)/i.test(t)) {
+    return '3'; // История
+  }
+  if (/(инфляц|экономик|политик|конституц|право|социальн|стратификац|гражданск|налог|рынок|издержк|безработиц|общество)/i.test(t)) {
+    return '2'; // Обществознание
+  }
+  if (/(орфоэп|ударен|пароним|пунктуац|причаст|деепричаст|сочинен|корн|приставк|суффикс|спп|ссп|текст.*егэ)/i.test(t)) {
+    return '5'; // Русский язык
+  }
+  if (/(тригонометр|логарифм|производн|планиметр|стереометр|неравенств|параметр|вероятност)/i.test(t)) {
+    return '4'; // Математика
+  }
+  if (/(python|пайтон|кодирован|алгебр.*логик|граф|рекурс|массив|информатик)/i.test(t)) {
+    return '1'; // Информатика
+  }
+  const exists = SUBJECTS.some(s => s.id === String(rawSubjectId));
+  return exists ? String(rawSubjectId) : '2';
+}
+
+// Оптимальное сжатие изображения перед отправкой в Vision AI
+function compressImageToDataUrl(file: File, maxDim = 1400): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const img = new Image();
+      img.src = reader.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(reader.result as string);
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => reject(new Error('Не удалось прочитать картинку'));
+    };
+    reader.onerror = () => reject(new Error('Ошибка чтения файла'));
+  });
+}
+
+export default function App() {
+  const now = new Date();
+  const todayStr = formatDateKey(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const [activeTab, setActiveTab] = useState<'calendar' | 'dailies' | 'tutors' | 'tree' | 'ai'>('calendar');
+  const [viewYear, setViewYear] = useState<number>(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState<number>(now.getMonth());
+
+  // Хранилище v4: чистый старт с 0 XP
   const [calendarTasks, setCalendarTasks] = useState<CalendarTask[]>(() =>
-    safeLoad('ege_calendar_tasks', DEFAULT_CALENDAR_TASKS)
+    safeLoad('ege_v4_calendar_tasks', [])
   );
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() =>
-    safeLoad('ege_daily_tasks', DEFAULT_DAILIES)
+    safeLoad('ege_v4_daily_tasks', [
+      { id: 'd1', title: 'Повторить 10 дат или терминов', completed: false },
+      { id: 'd2', title: 'Прорешать 1 тестовый вариант', completed: false },
+    ])
   );
   const [tutors, setTutors] = useState<TutorSession[]>(() =>
-    safeLoad('ege_tutors', DEFAULT_TUTORS)
+    safeLoad('ege_v4_tutors', [])
   );
   const [bonusXp, setBonusXp] = useState<number>(() =>
-    safeLoad('ege_bonus_xp', 0)
+    safeLoad('ege_v4_bonus_xp', 0)
   );
   const [lastWateredDate, setLastWateredDate] = useState<string>(() =>
-    localStorage.getItem('ege_last_watered') || ''
+    localStorage.getItem('ege_v4_last_watered') || ''
   );
+  const [geminiKey, setGeminiKey] = useState<string>(() =>
+    localStorage.getItem('ege_gemini_api_key') || ''
+  );
+  const [showKeyModal, setShowKeyModal] = useState(false);
 
   const [cloudId] = useState(() => {
     const saved = localStorage.getItem('ege_cloud_id');
@@ -99,40 +206,44 @@ export default function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem('ege_calendar_tasks', JSON.stringify(calendarTasks));
+    localStorage.setItem('ege_v4_calendar_tasks', JSON.stringify(calendarTasks));
   }, [calendarTasks]);
 
   useEffect(() => {
-    localStorage.setItem('ege_daily_tasks', JSON.stringify(dailyTasks));
+    localStorage.setItem('ege_v4_daily_tasks', JSON.stringify(dailyTasks));
   }, [dailyTasks]);
 
   useEffect(() => {
-    localStorage.setItem('ege_tutors', JSON.stringify(tutors));
+    localStorage.setItem('ege_v4_tutors', JSON.stringify(tutors));
   }, [tutors]);
 
   useEffect(() => {
-    localStorage.setItem('ege_bonus_xp', JSON.stringify(bonusXp));
+    localStorage.setItem('ege_v4_bonus_xp', JSON.stringify(bonusXp));
   }, [bonusXp]);
 
-  // Подсчет опыта (XP) для Дерева знаний
-  const completedCalendarCount = calendarTasks.filter(t => t.completed).length;
-  const completedHighPriorityCount = calendarTasks.filter(t => t.completed && t.priority === 'high').length;
+  // Сбалансированная система опыта (XP) — старт строго с 0 XP
+  const completedNormalCount = calendarTasks.filter(t => t.completed && t.priority !== 'high').length;
+  const completedHighCount = calendarTasks.filter(t => t.completed && t.priority === 'high').length;
+  const completedCalendarCount = completedNormalCount + completedHighCount;
   const completedDailiesCount = dailyTasks.filter(d => d.completed).length;
   const completedTutorsCount = tutors.filter(t => t.homeworkDone).length;
 
-  const totalXp =
-    completedCalendarCount * 25 +
-    completedHighPriorityCount * 15 +
-    completedDailiesCount * 15 +
-    completedTutorsCount * 35 +
-    bonusXp;
+  // Награды: Обычный вебинар = +3 XP, Важный = +5 XP, Ежедневка = +2 XP, ДЗ репетитора = +5 XP, Полив = +1 XP
+  const totalXp = Math.max(
+    0,
+    completedNormalCount * 3 +
+      completedHighCount * 5 +
+      completedDailiesCount * 2 +
+      completedTutorsCount * 5 +
+      bonusXp
+  );
 
   const getTreeStage = (xp: number) => {
-    if (xp < 50) return { level: 1, name: 'Пробуждение семечка', min: 0, max: 50, desc: 'Выполняй задачи и ежедневки, чтобы росток окреп!' };
-    if (xp < 150) return { level: 2, name: 'Молодой побег', min: 50, max: 150, desc: 'Появились первые крепкие листья. Продолжай в том же духе!' };
-    if (xp < 300) return { level: 3, name: 'Окрепшее деревце', min: 150, max: 300, desc: 'Густая крона знаний! Ты уже прошел отличную базу.' };
-    if (xp < 500) return { level: 4, name: 'Цветущая сакура ЕГЭ', min: 300, max: 500, desc: 'Дерево расцвело! Твоя дисциплина дает результаты.' };
-    return { level: 5, name: 'Золотое древо стобалльника', min: 500, max: 1000, desc: 'Легендарный уровень! Дерево приносит золотые плоды.' };
+    if (xp < 25) return { level: 1, name: 'Пробуждение семечка', min: 0, max: 25, desc: 'Закрывай вебинары (+3 XP) и ежедневки (+2 XP), чтобы росток окреп!' };
+    if (xp < 75) return { level: 2, name: 'Молодой побег', min: 25, max: 75, desc: 'Появились первые крепкие листья. Отличный темп подготовки!' };
+    if (xp < 150) return { level: 3, name: 'Окрепшее деревце', min: 75, max: 150, desc: 'Густая крона знаний! Ты уже закрыл солидную базу тем.' };
+    if (xp < 300) return { level: 4, name: 'Цветущая сакура ЕГЭ', min: 150, max: 300, desc: 'Дерево расцвело! Твоя дисциплина работает на максимум.' };
+    return { level: 5, name: 'Золотое древо стобалльника', min: 300, max: 600, desc: 'Легендарный уровень! Дерево приносит золотые плоды.' };
   };
 
   const treeStage = getTreeStage(totalXp);
@@ -141,208 +252,252 @@ export default function App() {
     Math.round(((totalXp - treeStage.min) / (treeStage.max - treeStage.min)) * 100)
   );
 
-  const todayStr = new Date().toISOString().split('T')[0];
   const canWaterToday = lastWateredDate !== todayStr;
 
   const handleWaterTree = () => {
     if (!canWaterToday) return;
-    setBonusXp(prev => prev + 15);
+    setBonusXp(prev => prev + 1);
     setLastWateredDate(todayStr);
-    localStorage.setItem('ege_last_watered', todayStr);
+    localStorage.setItem('ege_v4_last_watered', todayStr);
   };
 
-  // Чат и модалки
+  const handleResetTreeXp = () => {
+    if (!confirm('Сбросить весь опыт дерева и отметки выполнения задач до 0 XP?')) return;
+    setCalendarTasks(prev => prev.map(t => ({ ...t, completed: false })));
+    setDailyTasks(prev => prev.map(d => ({ ...d, completed: false })));
+    setTutors(prev => prev.map(t => ({ ...t, homeworkDone: false })));
+    setBonusXp(0);
+    setLastWateredDate('');
+    localStorage.removeItem('ege_v4_last_watered');
+  };
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { sender: 'ai', text: 'Привет! Я твой ИИ-наставник по подготовке к ЕГЭ. Задавай вопросы по расписанию или нажми «📷 Загрузить расписание», чтобы импортировать вебинары Умскул по фото!' }
+    { sender: 'ai', text: 'Привет! Нажми «📷 Загрузить расписание» и выбери скриншот расписания Умскул — я прочитаю реальные даты, время, предмет и точные темы с картинки и перенесу их в календарь.' }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [newDailyTitle, setNewDailyTitle] = useState('');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
-
-  // Состояния для умного импорта фото расписания
-  const [photoModalOpen, setPhotoModalOpen] = useState(false);
-  const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<string | null>(null);
-  const [selectedPhotoMime, setSelectedPhotoMime] = useState<string>('image/jpeg');
-  const [selectedPhotoName, setSelectedPhotoName] = useState<string>('');
-  const [photoSubjectId, setPhotoSubjectId] = useState<string>('3'); // По умолчанию История
-  const [apiKeyInput, setApiKeyInput] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
   const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const [analyzeStatus, setAnalyzeStatus] = useState('');
 
   // Форма для нового репетитора
   const [newTutorName, setNewTutorName] = useState('');
   const [newTutorSubject, setNewTutorSubject] = useState('2');
-  const [newTutorDate, setNewTutorDate] = useState('2026-11-20');
+  const [newTutorDate, setNewTutorDate] = useState(todayStr);
   const [newTutorTime, setNewTutorTime] = useState('18:00');
   const [newTutorHw, setNewTutorHw] = useState('');
 
-  // Открытие окна при выборе фотографии
-  const handlePhotoSelect = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Функция запроса к Vision AI (с поддержкой Gemini 2.0 Flash и резервного Vision-сервера)
+  const recognizeScheduleFromImage = async (dataUrl: string): Promise<any[]> => {
+    const ocrPrompt = `Ты точный OCR-сканер расписаний онлайн-школы Умскул для подготовки к ЕГЭ.
+Внимательно прочитай КАЖДУЮ ячейку календаря на изображении.
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать свои темы или пропускать дни, где есть текст! Переписывай темы слово в слово как на картинке.
 
-    setSelectedPhotoName(file.name);
-    setSelectedPhotoMime(file.type || 'image/jpeg');
+1. Определи предмет по заголовку или темам на картинке:
+   "2" = Обществознание
+   "3" = История
+   "5" = Русский язык
+   "4" = Математика
+   "1" = Информатика
+   "6" = Английский язык
+   "7" = Литература
+   "8" = Биология
+   "9" = Химия
+   "10" = Физика
+2. Определи месяц и год расписания (Ноябрь = 11, Декабрь = 12, Октябрь = 10, Январь = 01, Февраль = 02, Март = 03, Апрель = 04, Май = 05. Для Сентябрь-Декабрь год 2026, для Январь-Июнь год 2027. Если месяц не подписан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}).
+3. Для каждого дня месяца (числа от 1 до 31), где написано занятие, создай объект. Если в ячейке указано время (например, "16:00" или "14:00"), запиши его в поле "time".
+4. Верни ТОЛЬКО чистый JSON-массив без текста и без markdown:
+[
+  {"date": "2026-11-05", "time": "16:00", "subjectId": "3", "title": "Точная тема с картинки", "priority": "high"}
+]`;
 
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      setSelectedPhotoPreview(reader.result as string);
-      setPhotoModalOpen(true);
-    };
-    e.target.value = '';
+    let rawText = '';
+
+    // 1. Если есть ключ Gemini — используем официальный Google Gemini Flash Vision (максимальная точность чтения русского текста на картинках)
+    const activeKey = geminiKey.trim();
+    if (activeKey) {
+      const base64Data = dataUrl.split(',')[1];
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: ocrPrompt },
+                  { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+                ]
+              }
+            ],
+            generationConfig: { temperature: 0.1 }
+          })
+        }
+      );
+
+      const geminiData = await geminiRes.json();
+      if (!geminiData.error) {
+        rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+    }
+
+    // 2. Если ключа нет или запрос не прошел — используем бесплатный OpenAI-совместимый Vision endpoint
+    if (!rawText) {
+      const res = await fetch('https://text.pollinations.ai/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'openai',
+          temperature: 0.1,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: ocrPrompt },
+                { type: 'image_url', image_url: { url: dataUrl } }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Сервер распознавания перегружен (код ${res.status}). Нажми на 🔑 сверху, чтобы вставить бесплатный ключ Gemini для 100% точности.`);
+      }
+
+      const data = await res.json();
+      rawText = data?.choices?.[0]?.message?.content || '';
+    }
+
+    rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const startIdx = rawText.indexOf('[');
+    const endIdx = rawText.lastIndexOf(']');
+    if (startIdx === -1 || endIdx === -1) {
+      throw new Error('ИИ не смог найти таблицу с датами на этом изображении.');
+    }
+
+    return JSON.parse(rawText.slice(startIdx, endIdx + 1));
   };
 
-  // Запуск распознавания фото (через Gemini AI или умный шаблон выбранного предмета)
-  const handleConfirmPhotoImport = async () => {
-    if (!selectedPhotoPreview) return;
+  const handlePhotoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const fileList = Array.from(files);
+    e.target.value = '';
+
     setIsAnalyzingPhoto(true);
 
-    const chosenSubj = subjects.find(s => s.id === photoSubjectId) || subjects[0];
-
     try {
-      if (apiKeyInput.trim()) {
-        localStorage.setItem('gemini_api_key', apiKeyInput.trim());
-        const base64Data = selectedPhotoPreview.split(',')[1];
+      let totalAdded = 0;
+      let detectedMonth: number | null = null;
+      let detectedYear: number | null = null;
 
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyInput.trim()}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    {
-                      text: `Проанализируй это фото расписания подготовки к ЕГЭ (например, Умскул).
-Пользователь указал, что основной предмет на этом расписании: "${chosenSubj.name}" (subjectId: "${chosenSubj.id}").
-Поэтому для ВСЕХ найденных занятий ставь subjectId: "${chosenSubj.id}" (кроме случаев, где явно написан другой предмет из списка: 1-Информатика, 2-Обществознание, 3-История, 4-Математика, 5-Русский язык).
-Прочитай дни месяца и темы уроков на картинке. Месяц по умолчанию: Ноябрь 2026 (формат даты YYYY-MM-DD, например 2026-11-05).
-Верни ТОЛЬКО валидный JSON массив объектов без текста и без кавычек markdown:
-[
-  {"date": "2026-11-05", "subjectId": "${chosenSubj.id}", "title": "Точная тема с картинки", "priority": "high", "note": "Из фото расписания"}
-]`
-                    },
-                    { inline_data: { mime_type: selectedPhotoMime, data: base64Data } }
-                  ]
-                }
-              ]
-            })
-          }
-        );
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        setAnalyzeStatus(`Сканирую расписание ${i + 1} из ${fileList.length} (${file.name})...`);
 
-        const data = await response.json();
-        if (data.error) {
-          throw new Error(data.error.message || 'Ошибка API ключа');
-        }
-
-        let aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
-        aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(aiText);
+        const dataUrl = await compressImageToDataUrl(file, 1300);
+        const parsed = await recognizeScheduleFromImage(dataUrl);
 
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const importedTasks: CalendarTask[] = parsed.map((item: any, idx: number) => ({
-            id: String(Date.now() + idx),
-            date: item.date || '2026-11-10',
-            subjectId: String(item.subjectId || chosenSubj.id),
-            title: item.title || `Вебинар: ${chosenSubj.name}`,
-            priority: item.priority === 'high' ? 'high' : 'medium',
-            note: item.note || `Импорт Умскул (${selectedPhotoName})`,
-            completed: false,
-          }));
+          const validTasks: CalendarTask[] = parsed
+            .filter(item => item && item.title)
+            .map((item, idx) => {
+              const normalizedDate = normalizeDate(item.date, viewYear, viewMonth);
+              const [yStr, mStr] = normalizedDate.split('-');
+              const yNum = parseInt(yStr, 10);
+              const mNum = parseInt(mStr, 10) - 1;
+              if (!isNaN(yNum) && !isNaN(mNum) && mNum >= 0 && mNum <= 11) {
+                detectedYear = yNum;
+                detectedMonth = mNum;
+              }
 
-          setCalendarTasks(prev => [...prev, ...importedTasks]);
-          setChatMessages(prev => [
-            ...prev,
-            { sender: 'ai', text: `📸 ИИ успешно прочитал твоё фото "${selectedPhotoName}"! В календарь добавлено ${importedTasks.length} зан. по предмету «${chosenSubj.name}».` }
-          ]);
-          setIsAnalyzingPhoto(false);
-          setPhotoModalOpen(false);
-          setActiveTab('calendar');
-          return;
+              const cleanTitle = String(item.title).trim();
+              const cleanTime = item.time ? String(item.time).trim() : '';
+              const smartSubjectId = detectSubjectByKeywords(String(item.subjectId || '2'), cleanTitle);
+
+              return {
+                id: `${Date.now()}_${i}_${idx}`,
+                date: normalizedDate,
+                time: cleanTime,
+                subjectId: smartSubjectId,
+                title: cleanTitle,
+                priority: item.priority === 'high' ? 'high' : 'medium',
+                note: `Умскул (${file.name})`,
+                completed: false,
+              };
+            });
+
+          totalAdded += validTasks.length;
+
+          setCalendarTasks(prev => {
+            const nonDuplicates = validTasks.filter(
+              cand => !prev.some(ex => ex.date === cand.date && ex.title === cand.title && ex.subjectId === cand.subjectId)
+            );
+            return [...prev, ...nonDuplicates];
+          });
         }
       }
 
-      // Если API-ключ не введён — генерируем структурированное расписание строго по ВЫБРАННОМУ предмету (без левых предметов!)
-      const subjectTemplates: Record<string, { day: string; title: string; priority: 'high' | 'medium' }[]> = {
-        '3': [
-          { day: '2026-11-03', title: 'Восточные славяне и Древняя Русь', priority: 'medium' },
-          { day: '2026-11-07', title: 'Феодальная раздробленность и ордынское владычество', priority: 'high' },
-          { day: '2026-11-12', title: 'Возвышение Москвы: от Ивана Калиты до Ивана III', priority: 'high' },
-          { day: '2026-11-19', title: 'Эпоха Ивана Грозного и Смутное время', priority: 'high' },
-          { day: '2026-11-24', title: 'Первые Романовы и бунташный век', priority: 'medium' },
-          { day: '2026-11-28', title: 'Реформы Петра I и Северная война (практика по картам)', priority: 'high' },
-        ],
-        '2': [
-          { day: '2026-11-04', title: 'Человек и общество: мировоззрение и деятельность', priority: 'medium' },
-          { day: '2026-11-08', title: 'Экономические системы, спрос и предложение (задание 21)', priority: 'high' },
-          { day: '2026-11-13', title: 'Финансовые институты, ЦБ РФ и инфляция', priority: 'high' },
-          { day: '2026-11-18', title: 'Социальная стратификация, мобильность и контроль', priority: 'medium' },
-          { day: '2026-11-23', title: 'Политическая система, государство и формы правления', priority: 'high' },
-          { day: '2026-11-27', title: 'Конституция РФ: полномочия органов власти (задание 13)', priority: 'high' },
-        ],
-        '5': [
-          { day: '2026-11-05', title: 'Орфоэпические и лексические нормы (задания 4–6)', priority: 'medium' },
-          { day: '2026-11-11', title: 'Правописание корней и приставок (задания 9–10)', priority: 'high' },
-          { day: '2026-11-17', title: 'Н и НН в разных частях речи (задание 15)', priority: 'high' },
-          { day: '2026-11-22', title: 'Пунктуация в ССП и СПП (задания 16, 19, 20)', priority: 'medium' },
-          { day: '2026-11-29', title: 'Сочинение ЕГЭ (задание 27): проблема и авторская позиция', priority: 'high' },
-        ],
-        '4': [
-          { day: '2026-11-05', title: 'Планиметрия и тригонометрия первой части', priority: 'medium' },
-          { day: '2026-11-12', title: 'Производная и исследование функций', priority: 'high' },
-          { day: '2026-11-19', title: 'Текстовые задачи и теория вероятностей', priority: 'medium' },
-          { day: '2026-11-26', title: 'Уравнения и неравенства второй части', priority: 'high' },
-        ],
-        '1': [
-          { day: '2026-11-06', title: 'Системы счисления и кодирование информации', priority: 'medium' },
-          { day: '2026-11-14', title: 'Алгебра логики и таблицы истинности', priority: 'high' },
-          { day: '2026-11-21', title: 'Алгоритмы и программирование на Python', priority: 'high' },
-        ],
-      };
-
-      const templateList = subjectTemplates[chosenSubj.id] || subjectTemplates['3'];
-      const generatedTasks: CalendarTask[] = templateList.map((item, idx) => ({
-        id: String(Date.now() + idx),
-        date: item.day,
-        subjectId: chosenSubj.id,
-        title: item.title,
-        priority: item.priority,
-        note: `Расписание Умскул (${chosenSubj.name})`,
-        completed: false,
-      }));
-
-      setCalendarTasks(prev => {
-        const filtered = generatedTasks.filter(
-          cand => !prev.some(ex => ex.date === cand.date && ex.title === cand.title)
-        );
-        return [...prev, ...filtered];
-      });
+      if (detectedYear !== null && detectedMonth !== null) {
+        setViewYear(detectedYear);
+        setViewMonth(detectedMonth);
+      }
 
       setChatMessages(prev => [
         ...prev,
         {
           sender: 'ai',
-          text: `✅ Расписание из файла "${selectedPhotoName}" добавлено строго по предмету «${chosenSubj.name}» (${generatedTasks.length} зан.)! Никаких лишних предметов.`
+          text: `✅ Готово! Я просканировал фото расписания и добавил в календарь ${totalAdded} зан. точно по числам месяца.`
         }
       ]);
-      setIsAnalyzingPhoto(false);
-      setPhotoModalOpen(false);
       setActiveTab('calendar');
     } catch (err: any) {
+      alert(`Ошибка распознавания: ${err.message}`);
+    } finally {
       setIsAnalyzingPhoto(false);
-      alert(`Ошибка при чтении через API: ${err.message}. Очисти поле API-ключа, чтобы использовать встроенный импорт по предмету.`);
+      setAnalyzeStatus('');
     }
   };
+
+  // Переключение реальных месяцев
+  const handlePrevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear(y => y - 1);
+    } else {
+      setViewMonth(m => m - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear(y => y + 1);
+    } else {
+      setViewMonth(m => m + 1);
+    }
+  };
+
+  const handleGoToToday = () => {
+    setViewYear(now.getFullYear());
+    setViewMonth(now.getMonth());
+  };
+
+  // Реальные дни недели и числа месяца
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOffset = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
 
   const openNewTaskModal = (dateStr: string) => {
     setIsCreatingTask(true);
     setEditingTask({
       id: String(Date.now()),
       date: dateStr,
-      subjectId: '3',
+      time: '',
+      subjectId: '2',
       title: '',
       priority: 'medium',
       note: '',
@@ -375,7 +530,7 @@ export default function App() {
       { sender: 'user', text: userText },
       {
         sender: 'ai',
-        text: `Проанализировал твой план: сейчас важных задач (🔥) в календаре — ${highPriorityCount}, невыполненных ежедневок — ${uncompletedDailies}, а уровень твоего Дерева знаний — ${treeStage.level} (${totalXp} XP). Закрой сегодня хотя бы одну важную тему и одну ежедневку, чтобы быстрее вырастить дерево!`
+        text: `Сейчас у тебя в календаре невыполненных важных занятий (🔥): ${highPriorityCount}, открытых ежедневок: ${uncompletedDailies}. Опыт Дерева знаний: ${totalXp} XP (Уровень ${treeStage.level}).`
       }
     ]);
     setInputMessage('');
@@ -391,6 +546,22 @@ export default function App() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#0f1117] text-slate-100 font-sans overflow-hidden">
+      {/* Оверлей во время чтения фото ИИ */}
+      {isAnalyzingPhoto && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-[#161b22] border border-indigo-500/40 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-2xl mx-auto animate-pulse">
+              🔍
+            </div>
+            <h3 className="text-base font-bold">ИИ сканирует расписание...</h3>
+            <p className="text-xs text-slate-400">{analyzeStatus || 'Распознаю предмет, даты и темы уроков с фото'}</p>
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div className="h-full bg-indigo-500 animate-pulse w-3/4 rounded-full" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Боковая панель для ПК */}
       <aside className="hidden md:flex w-64 bg-[#161b22] border-r border-slate-800 flex-col justify-between shrink-0">
         <div>
@@ -429,13 +600,19 @@ export default function App() {
           </nav>
         </div>
 
-        <div className="p-4 border-t border-slate-800 space-y-3">
-          <label className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 rounded-xl cursor-pointer text-sm font-medium transition active:scale-95">
+        <div className="p-4 border-t border-slate-800 space-y-2.5">
+          <label className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl cursor-pointer text-sm font-medium transition active:scale-95 shadow-lg shadow-indigo-600/20">
             <span>📷 Загрузить расписание</span>
-            <input type="file" accept="image/*" onChange={handlePhotoSelect} className="hidden" />
+            <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
           </label>
-          <div className="text-xs text-slate-500 text-center">
-            Облако ID: <span className="text-slate-400 font-mono">{cloudId}</span>
+          <button
+            onClick={() => setShowKeyModal(true)}
+            className="w-full py-1.5 px-3 bg-slate-800/70 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg text-xs transition flex items-center justify-center gap-1.5"
+          >
+            <span>🔑 {geminiKey ? 'Ключ Gemini подключен' : 'Настроить ключ ИИ'}</span>
+          </button>
+          <div className="text-[11px] text-slate-500 text-center">
+            ID: <span className="text-slate-400 font-mono">{cloudId}</span>
           </div>
         </div>
       </aside>
@@ -454,7 +631,7 @@ export default function App() {
             </h2>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setActiveTab('tree')}
               className="flex items-center gap-1.5 py-1.5 px-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs font-semibold transition"
@@ -463,57 +640,127 @@ export default function App() {
               <span className="text-emerald-400/80">({totalXp} XP)</span>
             </button>
 
-            <label className="md:hidden flex items-center gap-1.5 py-1.5 px-3 bg-indigo-600/20 border border-indigo-500/30 text-indigo-200 rounded-lg cursor-pointer text-xs font-medium">
+            <button
+              onClick={() => setShowKeyModal(true)}
+              className="md:hidden py-1.5 px-2.5 bg-slate-800 text-slate-300 rounded-lg text-xs"
+              title="Ключ ИИ"
+            >
+              🔑
+            </button>
+
+            <label className="md:hidden flex items-center gap-1 py-1.5 px-3 bg-indigo-600 text-white rounded-lg cursor-pointer text-xs font-medium">
               <span>📷 Фото</span>
-              <input type="file" accept="image/*" onChange={handlePhotoSelect} className="hidden" />
+              <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
             </label>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          {/* ВКЛАДКА: КАЛЕНДАРЬ */}
+          {/* ВКЛАДКА: РЕАЛЬНЫЙ КАЛЕНДАРЬ */}
           {activeTab === 'calendar' && (
             <div className="space-y-4 md:space-y-6">
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
-                <div>
-                  <h3 className="text-lg md:text-xl font-bold">Ноябрь 2026</h3>
-                  <p className="text-xs text-slate-400">Отмечай выполненные уроки галочкой, чтобы растить Дерево знаний (+25 XP)</p>
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handlePrevMonth}
+                    className="w-9 h-9 rounded-xl bg-[#161b22] border border-slate-800 hover:border-slate-700 flex items-center justify-center text-sm"
+                    title="Предыдущий месяц"
+                  >
+                    ◀
+                  </button>
+                  <div className="min-w-[155px] text-center">
+                    <h3 className="text-lg md:text-xl font-bold">
+                      {MONTH_NAMES[viewMonth]} {viewYear}
+                    </h3>
+                  </div>
+                  <button
+                    onClick={handleNextMonth}
+                    className="w-9 h-9 rounded-xl bg-[#161b22] border border-slate-800 hover:border-slate-700 flex items-center justify-center text-sm"
+                    title="Следующий месяц"
+                  >
+                    ▶
+                  </button>
+                  <button
+                    onClick={handleGoToToday}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-xs text-slate-300 font-medium transition"
+                  >
+                    Сегодня
+                  </button>
                 </div>
-                <div className="flex gap-2">
-                  <label className="bg-slate-800 hover:bg-slate-700 px-3.5 py-2 rounded-xl text-xs md:text-sm font-medium transition cursor-pointer flex items-center gap-1.5">
-                    <span>📷 Импорт Умскул</span>
-                    <input type="file" accept="image/*" onChange={handlePhotoSelect} className="hidden" />
+
+                <div className="flex flex-wrap gap-2">
+                  <label className="bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 px-3.5 py-2 rounded-xl text-xs md:text-sm font-medium transition cursor-pointer flex items-center gap-1.5">
+                    <span>📷 Скан расписания Умскул</span>
+                    <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
                   </label>
                   <button
-                    onClick={() => openNewTaskModal('2026-11-15')}
+                    onClick={() => openNewTaskModal(todayStr)}
                     className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl text-xs md:text-sm font-medium transition shadow-lg shadow-indigo-600/20"
                   >
                     + Занятие
                   </button>
+                  {calendarTasks.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (confirm('Очистить все занятия из календаря?')) {
+                          setCalendarTasks([]);
+                        }
+                      }}
+                      className="bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 transition"
+                    >
+                      Очистить
+                    </button>
+                  )}
                 </div>
               </div>
 
               <div className="hidden md:grid grid-cols-7 gap-2 text-center font-bold text-xs text-slate-500">
-                {['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'].map(day => (
+                {WEEKDAYS_SHORT.map(day => (
                   <div key={day} className="py-1">{day}</div>
                 ))}
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 md:gap-3">
-                {Array.from({ length: 30 }).map((_, i) => {
+                {Array.from({ length: firstDayOffset }).map((_, emptyIdx) => (
+                  <div
+                    key={`empty_${emptyIdx}`}
+                    className="hidden md:block min-h-[125px] bg-[#161b22]/30 border border-slate-800/30 rounded-2xl"
+                  />
+                ))}
+
+                {Array.from({ length: daysInMonth }).map((_, i) => {
                   const dayNum = i + 1;
-                  const dateStr = `2026-11-${dayNum < 10 ? '0' + dayNum : dayNum}`;
+                  const dateStr = formatDateKey(viewYear, viewMonth, dayNum);
+                  const dayOfWeekIndex = (firstDayOffset + i) % 7;
+                  const weekdayLabel = WEEKDAYS_SHORT[dayOfWeekIndex];
+                  const isToday = dateStr === todayStr;
                   const dayTasks = calendarTasks.filter(t => t.date === dateStr);
 
                   return (
                     <div
-                      key={i}
+                      key={dateStr}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => handleDropOnDay(e, dateStr)}
-                      className="min-h-[110px] md:min-h-[125px] bg-[#161b22] border border-slate-800/90 rounded-2xl p-2.5 flex flex-col gap-1.5 hover:border-slate-700 transition group"
+                      className={`min-h-[115px] md:min-h-[130px] bg-[#161b22] rounded-2xl p-2.5 flex flex-col gap-1.5 transition group ${
+                        isToday
+                          ? 'border-2 border-indigo-500 shadow-lg shadow-indigo-500/10'
+                          : 'border border-slate-800/90 hover:border-slate-700'
+                      }`}
                     >
                       <div className="flex justify-between items-center">
-                        <span className="text-xs font-semibold text-slate-400">{dayNum} ноя</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs font-bold ${isToday ? 'text-indigo-400' : 'text-slate-300'}`}>
+                            {dayNum}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            {weekdayLabel}
+                          </span>
+                          {isToday && (
+                            <span className="text-[9px] bg-indigo-600/30 text-indigo-300 px-1.5 py-0.5 rounded font-semibold">
+                              Сегодня
+                            </span>
+                          )}
+                        </div>
                         <button
                           onClick={() => openNewTaskModal(dateStr)}
                           className="opacity-70 md:opacity-0 group-hover:opacity-100 text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded bg-slate-800/80 transition"
@@ -523,9 +770,9 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="flex flex-col gap-1.5 overflow-y-auto max-h-[90px]">
+                      <div className="flex flex-col gap-1.5 overflow-y-auto max-h-[95px]">
                         {dayTasks.map(task => {
-                          const subj = subjects.find(s => s.id === task.subjectId);
+                          const subj = SUBJECTS.find(s => s.id === task.subjectId);
                           const priorityEmoji = task.priority === 'high' ? '🔥' : task.priority === 'medium' ? '⚡' : '🌱';
 
                           return (
@@ -555,10 +802,17 @@ export default function App() {
                                   }
                                   className="w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer shrink-0"
                                 />
-                                <span className="font-extrabold bg-black/20 px-1 rounded text-[10px]">{subj?.short || 'П'}</span>
+                                <span className="font-extrabold bg-black/25 px-1 rounded text-[10px] shrink-0">
+                                  {subj?.short || 'ЕГЭ'}
+                                </span>
+                                {task.time && (
+                                  <span className="text-[10px] font-mono opacity-90 shrink-0">
+                                    {task.time}
+                                  </span>
+                                )}
                                 <span className="truncate">{task.title}</span>
                               </div>
-                              <span className="shrink-0 ml-1">{priorityEmoji}</span>
+                              <span className="shrink-0 ml-1 text-[10px]">{priorityEmoji}</span>
                             </div>
                           );
                         })}
@@ -575,7 +829,7 @@ export default function App() {
             <div className="max-w-2xl mx-auto space-y-6">
               <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-2xl p-4 flex items-center justify-between">
                 <div className="text-xs md:text-sm text-emerald-200">
-                  🌱 Каждая выполненная ежедневка приносит <strong>+15 XP</strong> твоему Дереву знаний!
+                  🌱 Каждая выполненная ежедневка приносит <strong>+2 XP</strong> твоему Дереву знаний!
                 </div>
                 <span className="text-xs font-bold text-emerald-400 shrink-0 ml-2">
                   Выполнено: {completedDailiesCount}/{dailyTasks.length}
@@ -622,7 +876,7 @@ export default function App() {
                         {task.title}
                       </span>
                     </label>
-                    <span className="text-[11px] text-emerald-400 font-semibold">+15 XP</span>
+                    <span className="text-[11px] text-emerald-400 font-semibold">+2 XP</span>
                     <button
                       onClick={() => setDailyTasks(dailyTasks.filter(t => t.id !== task.id))}
                       className="text-slate-500 hover:text-rose-400 text-sm px-2 py-1"
@@ -639,14 +893,14 @@ export default function App() {
           {activeTab === 'tutors' && (
             <div className="max-w-3xl mx-auto space-y-6">
               <div className="bg-[#161b22] border border-slate-800 p-4 md:p-5 rounded-2xl space-y-4">
-                <h3 className="text-sm font-bold text-slate-300">Добавить занятие с репетитором (ДЗ дает +35 XP 🌳)</h3>
+                <h3 className="text-sm font-bold text-slate-300">Добавить занятие с репетитором (ДЗ дает +5 XP 🌳)</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                   <select
                     value={newTutorSubject}
                     onChange={(e) => setNewTutorSubject(e.target.value)}
                     className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm"
                   >
-                    {subjects.map(s => (
+                    {SUBJECTS.map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
@@ -705,7 +959,7 @@ export default function App() {
 
               <div className="space-y-4">
                 {tutors.map(tutor => {
-                  const subj = subjects.find(s => s.id === tutor.subjectId);
+                  const subj = SUBJECTS.find(s => s.id === tutor.subjectId);
                   return (
                     <div key={tutor.id} className="bg-[#161b22] border border-slate-800 p-5 rounded-2xl space-y-4">
                       <div className="flex flex-wrap justify-between items-center gap-2">
@@ -734,7 +988,7 @@ export default function App() {
                             onChange={() => setTutors(tutors.map(item => item.id === tutor.id ? { ...item, homeworkDone: !item.homeworkDone } : item))}
                             className="w-4 h-4 accent-indigo-600 rounded"
                           />
-                          Выполнено (+35 XP)
+                          Выполнено (+5 XP)
                         </label>
                       </div>
                     </div>
@@ -744,24 +998,21 @@ export default function App() {
             </div>
           )}
 
-          {/* НОВАЯ ВКЛАДКА: ДЕРЕВО ЗНАНИЙ */}
+          {/* ВКЛАДКА: ДЕРЕВО ЗНАНИЙ */}
           {activeTab === 'tree' && (
             <div className="max-w-4xl mx-auto space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-[#161b22] border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl">
-                {/* Иллюстрация растущего дерева (SVG) */}
                 <div className="relative flex flex-col items-center justify-center bg-gradient-to-b from-indigo-950/40 via-slate-900/60 to-emerald-950/30 border border-slate-800/80 rounded-2xl p-6 min-h-[320px]">
                   <div className="absolute top-3 left-4 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     Стадия {treeStage.level} из 5
                   </div>
 
                   <svg viewBox="0 0 200 220" className="w-56 h-56 drop-shadow-lg transition-all duration-500">
-                    {/* Горшок / Земля */}
                     <ellipse cx="100" cy="195" rx="55" ry="12" fill="#1e293b" />
                     <path d="M65 165 L135 165 L125 200 L75 200 Z" fill="#b45309" />
-                    <path d="M60 158 L140 158 L138 168 L62 168 Z" fill="#d97706" rx="4" />
+                    <path d="M60 158 L140 158 L138 168 L62 168 Z" fill="#d97706" />
                     <ellipse cx="100" cy="165" rx="34" ry="6" fill="#451a03" />
 
-                    {/* Стадия 1: Маленький росток */}
                     {treeStage.level === 1 && (
                       <g>
                         <path d="M100 165 Q100 140 100 130" stroke="#22c55e" strokeWidth="5" strokeLinecap="round" fill="none" />
@@ -770,7 +1021,6 @@ export default function App() {
                       </g>
                     )}
 
-                    {/* Стадия 2: Молодой побег */}
                     {treeStage.level === 2 && (
                       <g>
                         <path d="M100 165 Q98 125 100 95" stroke="#854d0e" strokeWidth="7" strokeLinecap="round" fill="none" />
@@ -782,7 +1032,6 @@ export default function App() {
                       </g>
                     )}
 
-                    {/* Стадия 3: Окрепшее деревце */}
                     {treeStage.level === 3 && (
                       <g>
                         <path d="M100 165 L100 85" stroke="#78350f" strokeWidth="12" strokeLinecap="round" />
@@ -795,7 +1044,6 @@ export default function App() {
                       </g>
                     )}
 
-                    {/* Стадия 4: Цветущее дерево */}
                     {treeStage.level === 4 && (
                       <g>
                         <path d="M100 165 L100 80" stroke="#78350f" strokeWidth="14" strokeLinecap="round" />
@@ -804,7 +1052,6 @@ export default function App() {
                         <circle cx="62" cy="85" r="28" fill="#15803d" />
                         <circle cx="138" cy="82" r="28" fill="#16a34a" />
                         <circle cx="100" cy="60" r="38" fill="#22c55e" />
-                        {/* Цветы */}
                         <circle cx="75" cy="65" r="5" fill="#f472b6" />
                         <circle cx="118" cy="52" r="6" fill="#fb7185" />
                         <circle cx="55" cy="88" r="5" fill="#f472b6" />
@@ -814,7 +1061,6 @@ export default function App() {
                       </g>
                     )}
 
-                    {/* Стадия 5: Могучее древо стобалльника с золотыми плодами */}
                     {treeStage.level >= 5 && (
                       <g>
                         <path d="M100 165 L100 75" stroke="#78350f" strokeWidth="16" strokeLinecap="round" />
@@ -824,7 +1070,6 @@ export default function App() {
                         <circle cx="142" cy="78" r="32" fill="#15803d" />
                         <circle cx="100" cy="55" r="42" fill="#16a34a" />
                         <circle cx="100" cy="52" r="30" fill="#22c55e" />
-                        {/* Золотые яблоки знаний */}
                         <circle cx="70" cy="65" r="7" fill="#fbbf24" />
                         <circle cx="125" cy="55" r="7" fill="#f59e0b" />
                         <circle cx="52" cy="88" r="6" fill="#fbbf24" />
@@ -835,20 +1080,28 @@ export default function App() {
                     )}
                   </svg>
 
-                  <button
-                    onClick={handleWaterTree}
-                    disabled={!canWaterToday}
-                    className={`mt-2 px-5 py-2.5 rounded-xl font-semibold text-xs md:text-sm transition flex items-center gap-2 ${
-                      canWaterToday
-                        ? 'bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-600/30 cursor-pointer'
-                        : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                    }`}
-                  >
-                    <span>💧 {canWaterToday ? 'Полить дерево (+15 XP)' : 'Уже полито сегодня'}</span>
-                  </button>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={handleWaterTree}
+                      disabled={!canWaterToday}
+                      className={`px-4 py-2 rounded-xl font-semibold text-xs transition flex items-center gap-1.5 ${
+                        canWaterToday
+                          ? 'bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-600/30 cursor-pointer'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <span>💧 {canWaterToday ? 'Полить (+1 XP)' : 'Полито сегодня'}</span>
+                    </button>
+                    <button
+                      onClick={handleResetTreeXp}
+                      className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 hover:text-rose-300 text-slate-400 text-xs transition"
+                      title="Сбросить опыт до 0"
+                    >
+                      🔄 Сброс XP
+                    </button>
+                  </div>
                 </div>
 
-                {/* Описание уровня и шкала опыта */}
                 <div className="space-y-5">
                   <div>
                     <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
@@ -874,35 +1127,16 @@ export default function App() {
                   <div className="grid grid-cols-3 gap-3 pt-2">
                     <div className="bg-slate-900/70 border border-slate-800 p-3 rounded-2xl text-center">
                       <div className="text-lg font-bold text-indigo-400">{completedCalendarCount}</div>
-                      <div className="text-[11px] text-slate-400">Вебинаров закрыто</div>
+                      <div className="text-[11px] text-slate-400">Уроков (+3..5 XP)</div>
                     </div>
                     <div className="bg-slate-900/70 border border-slate-800 p-3 rounded-2xl text-center">
                       <div className="text-lg font-bold text-emerald-400">{completedDailiesCount}</div>
-                      <div className="text-[11px] text-slate-400">Ежедневок сделано</div>
+                      <div className="text-[11px] text-slate-400">Ежедневок (+2 XP)</div>
                     </div>
                     <div className="bg-slate-900/70 border border-slate-800 p-3 rounded-2xl text-center">
                       <div className="text-lg font-bold text-amber-400">{completedTutorsCount}</div>
-                      <div className="text-[11px] text-slate-400">ДЗ репетиторов</div>
+                      <div className="text-[11px] text-slate-400">ДЗ (+5 XP)</div>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Достижения */}
-              <div className="bg-[#161b22] border border-slate-800 rounded-3xl p-6 space-y-4">
-                <h4 className="text-base font-bold">🏆 Достижения подготовки</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className={`p-4 rounded-2xl border ${totalXp >= 50 ? 'bg-emerald-950/20 border-emerald-700/50 text-emerald-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
-                    <div className="text-xl mb-1">🌱 Первые шаги</div>
-                    <div className="text-xs">Набрать 50 XP за выполнение задач</div>
-                  </div>
-                  <div className={`p-4 rounded-2xl border ${completedHighPriorityCount >= 3 ? 'bg-amber-950/20 border-amber-700/50 text-amber-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
-                    <div className="text-xl mb-1">🔥 Укротитель дедлайнов</div>
-                    <div className="text-xs">Закрыть 3 задачи высокой важности</div>
-                  </div>
-                  <div className={`p-4 rounded-2xl border ${totalXp >= 300 ? 'bg-indigo-950/20 border-indigo-700/50 text-indigo-200' : 'bg-slate-900/40 border-slate-800 text-slate-500'}`}>
-                    <div className="text-xl mb-1">🌸 Мастер дисциплины</div>
-                    <div className="text-xs">Вырастить цветущее дерево (300+ XP)</div>
                   </div>
                 </div>
               </div>
@@ -948,7 +1182,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Нижняя навигация для телефона (5 иконок) */}
+      {/* Нижняя навигация для телефона */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161b22] border-t border-slate-800 flex items-center justify-around px-1 z-40">
         {navItems.map(tab => (
           <button
@@ -964,72 +1198,39 @@ export default function App() {
         ))}
       </nav>
 
-      {/* МОДАЛЬНОЕ ОКНО: ИМПОРТ РАСПИСАНИЯ УМСКУЛ ПО ФОТО */}
-      {photoModalOpen && (
+      {/* Модальное окно настройки ключа Gemini (по желанию для максимальной точности OCR) */}
+      {showKeyModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-slate-800 w-full max-w-md p-6 rounded-3xl space-y-4 shadow-2xl">
             <div className="flex justify-between items-center">
-              <h3 className="text-lg font-bold">📷 Импорт расписания по фото</h3>
-              <button
-                onClick={() => setPhotoModalOpen(false)}
-                className="text-slate-400 hover:text-white text-sm"
-              >
-                ✕
-              </button>
+              <h3 className="text-base font-bold">🔑 Настройка ключа Vision ИИ</h3>
+              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
-
-            {selectedPhotoPreview && (
-              <div className="h-36 w-full bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center">
-                <img src={selectedPhotoPreview} alt="Preview" className="max-h-full object-contain" />
-              </div>
-            )}
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-300 font-semibold block mb-1">
-                  1. Какой предмет на этом фото расписания?
-                </label>
-                <select
-                  value={photoSubjectId}
-                  onChange={(e) => setPhotoSubjectId(e.target.value)}
-                  className="w-full bg-slate-900 border border-indigo-500/50 rounded-xl px-4 py-2.5 text-sm font-medium focus:outline-none"
-                >
-                  {subjects.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Все распознанные вебинары будут добавлены строго по выбранному предмету.
-                </p>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">
-                  2. Ключ Gemini AI (необязательно — для точного чтения текста с фото)
-                </label>
-                <input
-                  type="password"
-                  placeholder="Оставь пустым для авто-шаблона по предмету..."
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-600"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              По умолчанию сайт использует бесплатный встроенный сканер. Если хочешь 100% точность чтения мелкого текста с таблиц Умскул через <strong>Google Gemini 2.0 Flash</strong>, вставь бесплатный ключ с <em>aistudio.google.com</em>:
+            </p>
+            <input
+              type="password"
+              placeholder="AIzaSy..."
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-600"
+            />
+            <div className="flex gap-3">
               <button
-                onClick={handleConfirmPhotoImport}
-                disabled={isAnalyzingPhoto}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-medium text-sm transition shadow-lg shadow-indigo-600/20"
+                onClick={() => {
+                  localStorage.setItem('ege_gemini_api_key', geminiKey.trim());
+                  setShowKeyModal(false);
+                }}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl font-medium text-sm transition"
               >
-                {isAnalyzingPhoto ? '⏳ Распознаю...' : 'Добавить в календарь'}
+                Сохранить
               </button>
               <button
-                onClick={() => setPhotoModalOpen(false)}
-                className="px-4 bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-medium text-sm transition"
+                onClick={() => setShowKeyModal(false)}
+                className="px-4 bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-medium text-sm transition"
               >
-                Отмена
+                Закрыть
               </button>
             </div>
           </div>
@@ -1065,7 +1266,7 @@ export default function App() {
                   onChange={(e) => setEditingTask({ ...editingTask, subjectId: e.target.value })}
                   className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm"
                 >
-                  {subjects.map(s => (
+                  {SUBJECTS.map(s => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
@@ -1082,14 +1283,23 @@ export default function App() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Дата</label>
                   <input
                     type="date"
                     value={editingTask.date}
                     onChange={(e) => setEditingTask({ ...editingTask, date: e.target.value })}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Время</label>
+                  <input
+                    type="time"
+                    value={editingTask.time || ''}
+                    onChange={(e) => setEditingTask({ ...editingTask, time: e.target.value })}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2.5 text-xs"
                   />
                 </div>
                 <div>
@@ -1097,11 +1307,11 @@ export default function App() {
                   <select
                     value={editingTask.priority}
                     onChange={(e) => setEditingTask({ ...editingTask, priority: e.target.value as CalendarTask['priority'] })}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2 py-2.5 text-xs"
                   >
-                    <option value="high">🔥 Важно (+40 XP)</option>
-                    <option value="medium">⚡ Средне (+25 XP)</option>
-                    <option value="normal">🌱 Обычное (+25 XP)</option>
+                    <option value="high">🔥 +5 XP</option>
+                    <option value="medium">⚡ +3 XP</option>
+                    <option value="normal">🌱 +3 XP</option>
                   </select>
                 </div>
               </div>
@@ -1123,7 +1333,7 @@ export default function App() {
                   onChange={(e) => setEditingTask({ ...editingTask, completed: e.target.checked })}
                   className="w-4 h-4 accent-emerald-500 rounded"
                 />
-                Отметить как выполненное (+XP для Дерева 🌳)
+                Отметить как выполненное
               </label>
             </div>
 
