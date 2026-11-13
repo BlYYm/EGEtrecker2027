@@ -1,4 +1,4 @@
-import { useState, useEffect, type ChangeEvent, type DragEvent } from 'react';
+import { useState, useEffect, type DragEvent } from 'react';
 
 interface Subject {
   id: string;
@@ -74,87 +74,6 @@ function formatDateKey(year: number, monthIndex: number, day: number): string {
   return `${year}-${m}-${d}`;
 }
 
-function normalizeDate(raw: string, fallbackYear: number, fallbackMonthIndex: number): string {
-  const clean = String(raw || '').trim();
-  const isoMatch = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  if (isoMatch) {
-    const y = parseInt(isoMatch[1], 10);
-    const m = parseInt(isoMatch[2], 10);
-    const d = parseInt(isoMatch[3], 10);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    }
-  }
-  const ruMatch = clean.match(/^(\d{1,2})[-/.](\d{1,2})(?:[-/.](\d{2,4}))?$/);
-  if (ruMatch) {
-    const d = parseInt(ruMatch[1], 10);
-    const m = parseInt(ruMatch[2], 10);
-    let y = ruMatch[3] ? parseInt(ruMatch[3], 10) : fallbackYear;
-    if (y < 100) y += 2000;
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    }
-  }
-  const dayOnly = parseInt(clean, 10);
-  if (!isNaN(dayOnly) && dayOnly >= 1 && dayOnly <= 31) {
-    return formatDateKey(fallbackYear, fallbackMonthIndex, dayOnly);
-  }
-  return formatDateKey(fallbackYear, fallbackMonthIndex, 1);
-}
-
-function detectSubjectByKeywords(rawSubjectId: string, title: string): string {
-  const t = title.toLowerCase();
-  if (/(рюрик|романов|смут|петр i|иван грозн|ордын|княз|древн.*рус|вов|великая отечеств|декабрист|ссср|истори|карт.*егэ)/i.test(t)) {
-    return '3';
-  }
-  if (/(инфляц|экономик|политик|конституц|право|социальн|стратификац|гражданск|налог|рынок|издержк|безработиц|общество)/i.test(t)) {
-    return '2';
-  }
-  if (/(орфоэп|ударен|пароним|пунктуац|причаст|деепричаст|сочинен|корн|приставк|суффикс|спп|ссп|текст.*егэ)/i.test(t)) {
-    return '5';
-  }
-  if (/(тригонометр|логарифм|производн|планиметр|стереометр|неравенств|параметр|вероятност)/i.test(t)) {
-    return '4';
-  }
-  if (/(python|пайтон|кодирован|алгебр.*логик|граф|рекурс|массив|информатик)/i.test(t)) {
-    return '1';
-  }
-  const exists = SUBJECTS.some(s => s.id === String(rawSubjectId));
-  return exists ? String(rawSubjectId) : '2';
-}
-
-function compressImageToDataUrl(file: File, maxDim = 1400): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      const img = new Image();
-      img.src = reader.result as string;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return resolve(reader.result as string);
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.onerror = () => reject(new Error('Не удалось прочитать картинку'));
-    };
-    reader.onerror = () => reject(new Error('Ошибка чтения файла'));
-  });
-}
-
 export default function App() {
   const now = new Date();
   const todayStr = formatDateKey(now.getFullYear(), now.getMonth(), now.getDate());
@@ -164,27 +83,33 @@ export default function App() {
   const [viewMonth, setViewMonth] = useState<number>(now.getMonth());
 
   const [calendarTasks, setCalendarTasks] = useState<CalendarTask[]>(() =>
-    safeLoad('ege_v5_calendar_tasks', [])
+    safeLoad('ege_v6_calendar_tasks', [])
   );
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() =>
-    safeLoad('ege_v5_daily_tasks', [
+    safeLoad('ege_v6_daily_tasks', [
       { id: 'd1', title: 'Повторить 10 дат или терминов', completed: false },
       { id: 'd2', title: 'Прорешать 1 тестовый вариант', completed: false },
     ])
   );
   const [tutors, setTutors] = useState<TutorSession[]>(() =>
-    safeLoad('ege_v5_tutors', [])
+    safeLoad('ege_v6_tutors', [])
   );
   const [bonusXp, setBonusXp] = useState<number>(() =>
-    safeLoad('ege_v5_bonus_xp', 0)
+    safeLoad('ege_v6_bonus_xp', 0)
   );
   const [lastWateredDate, setLastWateredDate] = useState<string>(() =>
-    localStorage.getItem('ege_v5_last_watered') || ''
+    localStorage.getItem('ege_v6_last_watered') || ''
   );
-  const [geminiKey, setGeminiKey] = useState<string>(() =>
-    localStorage.getItem('ege_gemini_api_key') || ''
-  );
-  const [showKeyModal, setShowKeyModal] = useState(false);
+
+  // Состояния для конструктора повторяющегося расписания по дням недели
+  const [showRepeatModal, setShowRepeatModal] = useState(false);
+  const [repeatSubjectId, setRepeatSubjectId] = useState('3');
+  const [repeatTitle, setRepeatTitle] = useState('Вебинар Умскул');
+  const [repeatTime, setRepeatTime] = useState('16:00');
+  const [repeatPriority, setRepeatPriority] = useState<'high' | 'medium' | 'normal'>('high');
+  const [repeatNote, setRepeatNote] = useState('');
+  const [repeatDays, setRepeatDays] = useState<number[]>([1, 3, 5]); // По умолчанию ВТ, ЧТ, СБ (индексы 0..6 для ПН..ВС)
+  const [repeatMonthsCount, setRepeatMonthsCount] = useState<number>(1); // На 1 или 3 месяца
 
   const [cloudId] = useState(() => {
     const saved = localStorage.getItem('ege_cloud_id');
@@ -195,12 +120,13 @@ export default function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem('ege_v5_calendar_tasks', JSON.stringify(calendarTasks));
-    localStorage.setItem('ege_v5_daily_tasks', JSON.stringify(dailyTasks));
-    localStorage.setItem('ege_v5_tutors', JSON.stringify(tutors));
-    localStorage.setItem('ege_v5_bonus_xp', JSON.stringify(bonusXp));
+    localStorage.setItem('ege_v6_calendar_tasks', JSON.stringify(calendarTasks));
+    localStorage.setItem('ege_v6_daily_tasks', JSON.stringify(dailyTasks));
+    localStorage.setItem('ege_v6_tutors', JSON.stringify(tutors));
+    localStorage.setItem('ege_v6_bonus_xp', JSON.stringify(bonusXp));
   }, [calendarTasks, dailyTasks, tutors, bonusXp]);
 
+  // Подсчет опыта (XP) для Дерева знаний
   const completedNormalCount = calendarTasks.filter(t => t.completed && t.priority !== 'high').length;
   const completedHighCount = calendarTasks.filter(t => t.completed && t.priority === 'high').length;
   const completedCalendarCount = completedNormalCount + completedHighCount;
@@ -236,7 +162,7 @@ export default function App() {
     if (!canWaterToday) return;
     setBonusXp(prev => prev + 1);
     setLastWateredDate(todayStr);
-    localStorage.setItem('ege_v5_last_watered', todayStr);
+    localStorage.setItem('ege_v6_last_watered', todayStr);
   };
 
   const handleResetTreeXp = () => {
@@ -246,219 +172,91 @@ export default function App() {
     setTutors(prev => prev.map(t => ({ ...t, homeworkDone: false })));
     setBonusXp(0);
     setLastWateredDate('');
-    localStorage.removeItem('ege_v5_last_watered');
+    localStorage.removeItem('ege_v6_last_watered');
+  };
+
+  // Функция генерации повторяющихся занятий по выбранным дням недели
+  const toggleRepeatDay = (dayIdx: number) => {
+    setRepeatDays(prev =>
+      prev.includes(dayIdx) ? prev.filter(d => d !== dayIdx) : [...prev, dayIdx]
+    );
+  };
+
+  const handleGenerateRepeatingSchedule = () => {
+    if (repeatDays.length === 0) {
+      alert('Выбери хотя бы один день недели (ПН–ВС)!');
+      return;
+    }
+
+    const subj = SUBJECTS.find(s => s.id === repeatSubjectId) || SUBJECTS[0];
+    const finalTitle = repeatTitle.trim() || `Занятие: ${subj.name}`;
+    const generated: CalendarTask[] = [];
+
+    for (let mOffset = 0; mOffset < repeatMonthsCount; mOffset++) {
+      const targetDateObj = new Date(viewYear, viewMonth + mOffset, 1);
+      const y = targetDateObj.getFullYear();
+      const m = targetDateObj.getMonth();
+      const totalDays = new Date(y, m + 1, 0).getDate();
+
+      for (let d = 1; d <= totalDays; d++) {
+        const currentDayObj = new Date(y, m, d);
+        // Переводим из JS-формата (ВС=0, ПН=1..СБ=6) в наш формат (ПН=0..ВС=6)
+        const weekdayIdx = (currentDayObj.getDay() + 6) % 7;
+
+        if (repeatDays.includes(weekdayIdx)) {
+          const dateStr = formatDateKey(y, m, d);
+          generated.push({
+            id: `${Date.now()}_${mOffset}_${d}_${Math.random().toString(36).slice(2, 6)}`,
+            date: dateStr,
+            time: repeatTime,
+            subjectId: repeatSubjectId,
+            title: finalTitle,
+            priority: repeatPriority,
+            note: repeatNote.trim() || 'Повторяющееся расписание',
+            completed: false,
+          });
+        }
+      }
+    }
+
+    setCalendarTasks(prev => {
+      const nonDuplicates = generated.filter(
+        cand => !prev.some(ex => ex.date === cand.date && ex.subjectId === cand.subjectId && ex.title === cand.title && ex.time === cand.time)
+      );
+      return [...prev, ...nonDuplicates];
+    });
+
+    const daysNames = repeatDays
+      .sort((a, b) => a - b)
+      .map(idx => WEEKDAYS_SHORT[idx])
+      .join(', ');
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        sender: 'ai',
+        text: `✅ Добавлено расписание по предмету «${subj.name}» (${finalTitle}) на каждый: ${daysNames} (всего занятий: ${generated.length}).`
+      }
+    ]);
+
+    setShowRepeatModal(false);
+    setActiveTab('calendar');
   };
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { sender: 'ai', text: 'Привет! Нажми «📷 Загрузить расписание» и выбери скриншот расписания Умскул — я прочитаю реальные даты, время, предмет и точные темы с картинки и перенесу их в календарь.' }
+    { sender: 'ai', text: 'Привет! Нажми «🔄 Расписание по дням», чтобы за пару секунд раскидать вебинары Умскул или репетиторов по нужным дням недели (ПН–ВС) на весь месяц вперед!' }
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [newDailyTitle, setNewDailyTitle] = useState('');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
-  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
-  const [analyzeStatus, setAnalyzeStatus] = useState('');
 
   const [newTutorName, setNewTutorName] = useState('');
   const [newTutorSubject, setNewTutorSubject] = useState('2');
   const [newTutorDate, setNewTutorDate] = useState(todayStr);
   const [newTutorTime, setNewTutorTime] = useState('18:00');
   const [newTutorHw, setNewTutorHw] = useState('');
-
-  // Автоматический подбор рабочей модели Gemini для твоего ключа
-  const callGeminiVisionWithAutoModel = async (base64Data: string, promptText: string, apiKey: string): Promise<string> => {
-    const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-flash-latest',
-      'gemini-2.5-pro',
-    ];
-
-    // Сначала запрашиваем у самого Google список реально доступных моделей для этого ключа
-    try {
-      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-      if (listRes.ok) {
-        const listData = await listRes.json();
-        const available: string[] = (listData.models || [])
-          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map((m: any) => String(m.name).replace(/^models\//, ''))
-          .filter((name: string) => name.includes('gemini') && !name.includes('embedding') && !name.includes('tts'));
-
-        // Ставим модели flash в приоритет
-        const flashModels = available.filter(n => n.includes('flash'));
-        const otherModels = available.filter(n => !n.includes('flash'));
-        candidateModels.unshift(...flashModels, ...otherModels);
-      }
-    } catch {
-      // Если список не загрузился, идем по стандартному списку candidateModels
-    }
-
-    const uniqueModels = Array.from(new Set(candidateModels));
-    let lastErrorMsg = 'Не удалось подобрать модель Gemini';
-
-    for (const modelName of uniqueModels) {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: promptText },
-                  { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
-                ]
-              }
-            ],
-            generationConfig: { temperature: 0.1 }
-          })
-        }
-      );
-
-      const data = await res.json();
-      if (!data.error) {
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        if (text) return text;
-      } else {
-        lastErrorMsg = data.error.message || lastErrorMsg;
-        // Если модель просто не найдена (404), пробуем следующую из списка
-        if (res.status === 404 || /not found|not supported/i.test(lastErrorMsg)) {
-          continue;
-        }
-        // Если ошибка ключа или квоты — сразу сообщаем
-        throw new Error(`Google API (${modelName}): ${lastErrorMsg}`);
-      }
-    }
-
-    throw new Error(`Google API: ${lastErrorMsg}`);
-  };
-
-  const recognizeScheduleFromImage = async (dataUrl: string): Promise<any[]> => {
-    const ocrPrompt = `Ты точный OCR-сканер расписаний онлайн-школы Умскул для подготовки к ЕГЭ.
-Внимательно прочитай КАЖДУЮ ячейку календаря на изображении.
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать свои темы! Переписывай темы слово в слово как на картинке.
-
-1. Определи предмет по заголовку или темам на картинке:
-   "2" = Обществознание
-   "3" = История
-   "5" = Русский язык
-   "4" = Математика
-   "1" = Информатика
-   "6" = Английский язык
-   "7" = Литература
-   "8" = Биология
-   "9" = Химия
-   "10" = Физика
-2. Определи месяц и год расписания (Ноябрь = 11, Декабрь = 12, Октябрь = 10, Январь = 01, Февраль = 02, Март = 03, Апрель = 04, Май = 05. Для Сентябрь-Декабрь год 2026, для Январь-Июнь год 2027. Если месяц не подписан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}).
-3. Для каждого дня месяца с занятием создай объект. Если есть время (например 16:00), запиши его в "time".
-4. Верни ТОЛЬКО чистый JSON-массив:
-[
-  {"date": "2026-11-05", "time": "16:00", "subjectId": "3", "title": "Тема с картинки", "priority": "high"}
-]`;
-
-    let rawText = '';
-    const activeKey = geminiKey.trim();
-
-    if (activeKey) {
-      const base64Data = dataUrl.split(',')[1];
-      rawText = await callGeminiVisionWithAutoModel(base64Data, ocrPrompt, activeKey);
-    } else {
-      throw new Error('Нажми на кнопку «🔑 Настроить ключ ИИ» и вставь свой ключ Gemini (AQ.Ab...), чтобы сканировать фото расписаний!');
-    }
-
-    rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const startIdx = rawText.indexOf('[');
-    const endIdx = rawText.lastIndexOf(']');
-    if (startIdx === -1 || endIdx === -1) {
-      throw new Error('ИИ не смог найти таблицу с датами на этом изображении.');
-    }
-
-    return JSON.parse(rawText.slice(startIdx, endIdx + 1));
-  };
-
-  const handlePhotoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const fileList = Array.from(files);
-    e.target.value = '';
-
-    setIsAnalyzingPhoto(true);
-
-    try {
-      let totalAdded = 0;
-      let detectedMonth: number | null = null;
-      let detectedYear: number | null = null;
-
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i];
-        setAnalyzeStatus(`Сканирую расписание ${i + 1} из ${fileList.length} (${file.name})...`);
-
-        const dataUrl = await compressImageToDataUrl(file, 1400);
-        const parsed = await recognizeScheduleFromImage(dataUrl);
-
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const validTasks: CalendarTask[] = parsed
-            .filter(item => item && item.title)
-            .map((item, idx) => {
-              const normalizedDate = normalizeDate(item.date, viewYear, viewMonth);
-              const [yStr, mStr] = normalizedDate.split('-');
-              const yNum = parseInt(yStr, 10);
-              const mNum = parseInt(mStr, 10) - 1;
-              if (!isNaN(yNum) && !isNaN(mNum) && mNum >= 0 && mNum <= 11) {
-                detectedYear = yNum;
-                detectedMonth = mNum;
-              }
-
-              const cleanTitle = String(item.title).trim();
-              const cleanTime = item.time ? String(item.time).trim() : '';
-              const smartSubjectId = detectSubjectByKeywords(String(item.subjectId || '2'), cleanTitle);
-
-              return {
-                id: `${Date.now()}_${i}_${idx}`,
-                date: normalizedDate,
-                time: cleanTime,
-                subjectId: smartSubjectId,
-                title: cleanTitle,
-                priority: item.priority === 'high' ? 'high' : 'medium',
-                note: `Умскул (${file.name})`,
-                completed: false,
-              };
-            });
-
-          totalAdded += validTasks.length;
-
-          setCalendarTasks(prev => {
-            const nonDuplicates = validTasks.filter(
-              cand => !prev.some(ex => ex.date === cand.date && ex.title === cand.title && ex.subjectId === cand.subjectId)
-            );
-            return [...prev, ...nonDuplicates];
-          });
-        }
-      }
-
-      if (detectedYear !== null && detectedMonth !== null) {
-        setViewYear(detectedYear);
-        setViewMonth(detectedMonth);
-      }
-
-      setChatMessages(prev => [
-        ...prev,
-        {
-          sender: 'ai',
-          text: `✅ Готово! Я просканировал фото расписания и добавил в календарь ${totalAdded} зан. точно по числам месяца.`
-        }
-      ]);
-      setActiveTab('calendar');
-    } catch (err: any) {
-      alert(`Ошибка распознавания: ${err.message}`);
-    } finally {
-      setIsAnalyzingPhoto(false);
-      setAnalyzeStatus('');
-    }
-  };
 
   const handlePrevMonth = () => {
     if (viewMonth === 0) {
@@ -491,7 +289,7 @@ export default function App() {
     setEditingTask({
       id: String(Date.now()),
       date: dateStr,
-      time: '',
+      time: '16:00',
       subjectId: '2',
       title: '',
       priority: 'medium',
@@ -541,21 +339,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#0f1117] text-slate-100 font-sans overflow-hidden">
-      {isAnalyzingPhoto && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-[#161b22] border border-indigo-500/40 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-2xl mx-auto animate-pulse">
-              🔍
-            </div>
-            <h3 className="text-base font-bold">ИИ сканирует расписание...</h3>
-            <p className="text-xs text-slate-400">{analyzeStatus || 'Распознаю предмет, даты и темы уроков с фото'}</p>
-            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-              <div className="h-full bg-indigo-500 animate-pulse w-3/4 rounded-full" />
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Боковая панель для ПК */}
       <aside className="hidden md:flex w-64 bg-[#161b22] border-r border-slate-800 flex-col justify-between shrink-0">
         <div>
           <div className="p-6 flex items-center gap-3">
@@ -594,15 +378,11 @@ export default function App() {
         </div>
 
         <div className="p-4 border-t border-slate-800 space-y-2.5">
-          <label className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl cursor-pointer text-sm font-medium transition active:scale-95 shadow-lg shadow-indigo-600/20">
-            <span>📷 Загрузить расписание</span>
-            <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
-          </label>
           <button
-            onClick={() => setShowKeyModal(true)}
-            className="w-full py-1.5 px-3 bg-slate-800/70 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg text-xs transition flex items-center justify-center gap-1.5"
+            onClick={() => setShowRepeatModal(true)}
+            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl cursor-pointer text-sm font-medium transition active:scale-95 shadow-lg shadow-indigo-600/20"
           >
-            <span>🔑 {geminiKey ? 'Ключ Gemini подключен' : 'Настроить ключ ИИ'}</span>
+            <span>🔄 Расписание по дням</span>
           </button>
           <div className="text-[11px] text-slate-500 text-center">
             ID: <span className="text-slate-400 font-mono">{cloudId}</span>
@@ -610,6 +390,7 @@ export default function App() {
         </div>
       </aside>
 
+      {/* Основная область */}
       <main className="flex-1 flex flex-col overflow-hidden pb-16 md:pb-0">
         <header className="h-14 md:h-16 border-b border-slate-800 bg-[#161b22]/80 backdrop-blur flex items-center justify-between px-4 md:px-8 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -633,21 +414,16 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setShowKeyModal(true)}
-              className="md:hidden py-1.5 px-2.5 bg-slate-800 text-slate-300 rounded-lg text-xs"
-              title="Ключ ИИ"
+              onClick={() => setShowRepeatModal(true)}
+              className="md:hidden flex items-center gap-1 py-1.5 px-3 bg-indigo-600 text-white rounded-lg text-xs font-medium"
             >
-              🔑
+              <span>🔄 По дням</span>
             </button>
-
-            <label className="md:hidden flex items-center gap-1 py-1.5 px-3 bg-indigo-600 text-white rounded-lg cursor-pointer text-xs font-medium">
-              <span>📷 Фото</span>
-              <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
-            </label>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          {/* ВКЛАДКА: РЕАЛЬНЫЙ КАЛЕНДАРЬ */}
           {activeTab === 'calendar' && (
             <div className="space-y-4 md:space-y-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
@@ -680,10 +456,12 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <label className="bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 px-3.5 py-2 rounded-xl text-xs md:text-sm font-medium transition cursor-pointer flex items-center gap-1.5">
-                    <span>📷 Скан расписания Умскул</span>
-                    <input type="file" accept="image/*" multiple onChange={handlePhotoUpload} className="hidden" />
-                  </label>
+                  <button
+                    onClick={() => setShowRepeatModal(true)}
+                    className="bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 px-3.5 py-2 rounded-xl text-xs md:text-sm font-medium transition flex items-center gap-1.5"
+                  >
+                    <span>🔄 Заполнить по дням недели</span>
+                  </button>
                   <button
                     onClick={() => openNewTaskModal(todayStr)}
                     className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl text-xs md:text-sm font-medium transition shadow-lg shadow-indigo-600/20"
@@ -815,6 +593,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ВКЛАДКА: ЕЖЕДНЕВКИ */}
           {activeTab === 'dailies' && (
             <div className="max-w-2xl mx-auto space-y-6">
               <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-2xl p-4 flex items-center justify-between">
@@ -879,6 +658,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ВКЛАДКА: РЕПЕТИТОРЫ */}
           {activeTab === 'tutors' && (
             <div className="max-w-3xl mx-auto space-y-6">
               <div className="bg-[#161b22] border border-slate-800 p-4 md:p-5 rounded-2xl space-y-4">
@@ -987,6 +767,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ВКЛАДКА: ДЕРЕВО ЗНАНИЙ */}
           {activeTab === 'tree' && (
             <div className="max-w-4xl mx-auto space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center bg-[#161b22] border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl">
@@ -1131,6 +912,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ВКЛАДКА: ИИ НАСТАВНИК */}
           {activeTab === 'ai' && (
             <div className="max-w-3xl mx-auto h-[calc(100vh-11rem)] flex flex-col bg-[#161b22] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
               <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4">
@@ -1149,7 +931,7 @@ export default function App() {
               <div className="p-3 md:p-4 border-t border-slate-800 bg-[#161b22] flex gap-2.5">
                 <input
                   type="text"
-                  placeholder="Спроси ИИ о распределении нагрузки..."
+                  placeholder="Спроси о распределении нагрузки..."
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={(e) => {
@@ -1169,6 +951,7 @@ export default function App() {
         </div>
       </main>
 
+      {/* Нижняя навигация для телефона */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#161b22] border-t border-slate-800 flex items-center justify-around px-1 z-40">
         {navItems.map(tab => (
           <button
@@ -1184,44 +967,137 @@ export default function App() {
         ))}
       </nav>
 
-      {showKeyModal && (
+      {/* МОДАЛЬНОЕ ОКНО: ПОВТОРЯЮЩЕЕСЯ РАСПИСАНИЕ ПО ДНЯМ НЕДЕЛИ */}
+      {showRepeatModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-slate-800 w-full max-w-md p-6 rounded-3xl space-y-4 shadow-2xl">
             <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold">🔑 Настройка ключа Vision ИИ</h3>
-              <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-white">✕</button>
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Вставь свой API-ключ из <em>aistudio.google.com</em> (начинается на <strong>AQ.Ab...</strong> или <strong>AIza...</strong>). Сайт сам автоматически подберет доступную модель Gemini Vision:
-            </p>
-            <input
-              type="password"
-              placeholder="AQ.Ab8RN6..."
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-600"
-            />
-            <div className="flex gap-3">
+              <h3 className="text-lg font-bold">🔄 Расписание по дням недели</h3>
               <button
-                onClick={() => {
-                  localStorage.setItem('ege_gemini_api_key', geminiKey.trim());
-                  setShowKeyModal(false);
-                }}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl font-medium text-sm transition"
+                onClick={() => setShowRepeatModal(false)}
+                className="text-slate-400 hover:text-white text-sm"
               >
-                Сохранить
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Предмет</label>
+                <select
+                  value={repeatSubjectId}
+                  onChange={(e) => setRepeatSubjectId(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm"
+                >
+                  {SUBJECTS.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Название занятия (тема или формат)</label>
+                <input
+                  type="text"
+                  placeholder="Например: Вебинар Умскул / Практика"
+                  value={repeatTitle}
+                  onChange={(e) => setRepeatTitle(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-600"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-300 font-semibold block mb-1.5">
+                  По каким дням недели повторяется?
+                </label>
+                <div className="grid grid-cols-7 gap-1.5">
+                  {WEEKDAYS_SHORT.map((dayName, idx) => {
+                    const isSelected = repeatDays.includes(idx);
+                    return (
+                      <button
+                        key={dayName}
+                        type="button"
+                        onClick={() => toggleRepeatDay(idx)}
+                        className={`py-2.5 rounded-xl text-xs font-bold border transition ${
+                          isSelected
+                            ? 'bg-indigo-600 border-indigo-400 text-white shadow-md shadow-indigo-600/30'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        {dayName}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Время</label>
+                  <input
+                    type="time"
+                    value={repeatTime}
+                    onChange={(e) => setRepeatTime(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-2.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Важность</label>
+                  <select
+                    value={repeatPriority}
+                    onChange={(e) => setRepeatPriority(e.target.value as CalendarTask['priority'])}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2 py-2.5 text-xs"
+                  >
+                    <option value="high">🔥 +5 XP</option>
+                    <option value="medium">⚡ +3 XP</option>
+                    <option value="normal">🌱 +3 XP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Период</label>
+                  <select
+                    value={repeatMonthsCount}
+                    onChange={(e) => setRepeatMonthsCount(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2 py-2.5 text-xs"
+                  >
+                    <option value={1}>1 месяц</option>
+                    <option value={2}>2 месяца</option>
+                    <option value={3}>3 месяца</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Заметка ко всем занятиям (необязательно)</label>
+                <input
+                  type="text"
+                  placeholder="Например: Не забывать конспект и ДЗ..."
+                  value={repeatNote}
+                  onChange={(e) => setRepeatNote(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-indigo-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleGenerateRepeatingSchedule}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-medium text-sm transition shadow-lg shadow-indigo-600/20"
+              >
+                Заполнить календарь
               </button>
               <button
-                onClick={() => setShowKeyModal(false)}
-                className="px-4 bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-medium text-sm transition"
+                onClick={() => setShowRepeatModal(false)}
+                className="px-4 bg-slate-800 hover:bg-slate-700 py-3 rounded-xl font-medium text-sm transition"
               >
-                Закрыть
+                Отмена
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Модальное окно создания / редактирования отдельной задачи */}
       {editingTask && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#161b22] border border-slate-800 w-full max-w-md p-6 rounded-3xl space-y-4 shadow-2xl">
