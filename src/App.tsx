@@ -266,69 +266,74 @@ export default function App() {
   const [newTutorTime, setNewTutorTime] = useState('18:00');
   const [newTutorHw, setNewTutorHw] = useState('');
 
-  // Обновленная функция: если сервер перегружен, делает до 3 попыток сама
+  // Автоматический подбор рабочей модели Gemini для твоего ключа
   const callGeminiVisionWithAutoModel = async (base64Data: string, promptText: string, apiKey: string): Promise<string> => {
     const candidateModels = [
-      'gemini-1.5-flash-latest',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
       'gemini-flash-latest',
-      'gemini-1.5-pro-latest',
+      'gemini-2.5-pro',
     ];
 
+    // Сначала запрашиваем у самого Google список реально доступных моделей для этого ключа
+    try {
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const available: string[] = (listData.models || [])
+          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+          .map((m: any) => String(m.name).replace(/^models\//, ''))
+          .filter((name: string) => name.includes('gemini') && !name.includes('embedding') && !name.includes('tts'));
+
+        // Ставим модели flash в приоритет
+        const flashModels = available.filter(n => n.includes('flash'));
+        const otherModels = available.filter(n => !n.includes('flash'));
+        candidateModels.unshift(...flashModels, ...otherModels);
+      }
+    } catch {
+      // Если список не загрузился, идем по стандартному списку candidateModels
+    }
+
+    const uniqueModels = Array.from(new Set(candidateModels));
     let lastErrorMsg = 'Не удалось подобрать модель Gemini';
 
-    for (const modelName of candidateModels) {
-      // Пытаемся пробиться на сервер до 3 раз для каждой модели
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      { text: promptText },
-                      { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
-                    ]
-                  }
-                ],
-                generationConfig: { temperature: 0.1 }
-              })
-            }
-          );
-
-          const data = await res.json();
-          if (!data.error) {
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (text) return text;
-          } else {
-            lastErrorMsg = data.error.message || lastErrorMsg;
-            
-            // Если ошибка 503 (High demand) - ждем 3 секунды и повторяем незаметно для пользователя
-            if (res.status === 503 || /high demand/i.test(lastErrorMsg)) {
-              if (attempt < 3) {
-                setAnalyzeStatus(`Сервер Google загружен. Жду 3 сек и пробую снова (попытка ${attempt + 1}/3)...`);
-                await new Promise(r => setTimeout(r, 3000));
-                continue; // Повторяем попытку
+    for (const modelName of uniqueModels) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: promptText },
+                  { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+                ]
               }
-            }
-            
-            // Если модель просто не поддерживается для этого аккаунта - переходим к следующей модели
-            if (res.status === 404 || res.status === 400 || /not found|not supported/i.test(lastErrorMsg)) {
-              break; 
-            }
-            
-            throw new Error(`Google API (${modelName}): ${lastErrorMsg}`);
-          }
-        } catch (e: any) {
-          lastErrorMsg = e.message || lastErrorMsg;
+            ],
+            generationConfig: { temperature: 0.1 }
+          })
         }
+      );
+
+      const data = await res.json();
+      if (!data.error) {
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (text) return text;
+      } else {
+        lastErrorMsg = data.error.message || lastErrorMsg;
+        // Если модель просто не найдена (404), пробуем следующую из списка
+        if (res.status === 404 || /not found|not supported/i.test(lastErrorMsg)) {
+          continue;
+        }
+        // Если ошибка ключа или квоты — сразу сообщаем
+        throw new Error(`Google API (${modelName}): ${lastErrorMsg}`);
       }
     }
 
-    throw new Error(`Google API недоступен: ${lastErrorMsg}`);
+    throw new Error(`Google API: ${lastErrorMsg}`);
   };
 
   const recognizeScheduleFromImage = async (dataUrl: string): Promise<any[]> => {
@@ -337,8 +342,17 @@ export default function App() {
 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать свои темы! Переписывай темы слово в слово как на картинке.
 
 1. Определи предмет по заголовку или темам на картинке:
-   "2" = Обществознание, "3" = История, "5" = Русский язык, "4" = Математика, "1" = Информатика
-2. Определи месяц и год расписания (Ноябрь = 11, Октябрь = 10 и т.д. Если месяц не подписан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}).
+   "2" = Обществознание
+   "3" = История
+   "5" = Русский язык
+   "4" = Математика
+   "1" = Информатика
+   "6" = Английский язык
+   "7" = Литература
+   "8" = Биология
+   "9" = Химия
+   "10" = Физика
+2. Определи месяц и год расписания (Ноябрь = 11, Декабрь = 12, Октябрь = 10, Январь = 01, Февраль = 02, Март = 03, Апрель = 04, Май = 05. Для Сентябрь-Декабрь год 2026, для Январь-Июнь год 2027. Если месяц не подписан, используй ${viewYear}-${String(viewMonth + 1).padStart(2, '0')}).
 3. Для каждого дня месяца с занятием создай объект. Если есть время (например 16:00), запиши его в "time".
 4. Верни ТОЛЬКО чистый JSON-массив:
 [
@@ -352,7 +366,7 @@ export default function App() {
       const base64Data = dataUrl.split(',')[1];
       rawText = await callGeminiVisionWithAutoModel(base64Data, ocrPrompt, activeKey);
     } else {
-      throw new Error('Вставь свой ключ Gemini (AQ.Ab...), чтобы сканировать фото расписаний!');
+      throw new Error('Нажми на кнопку «🔑 Настроить ключ ИИ» и вставь свой ключ Gemini (AQ.Ab...), чтобы сканировать фото расписаний!');
     }
 
     rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
